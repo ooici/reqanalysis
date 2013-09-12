@@ -1,21 +1,30 @@
 #!/usr/bin/env python
 
-"""Requirements Analysis"""
+"""Requirements Analysis.
+
+USAGE: python reqanalysis.py <in_filename> <out_filename>
+
+Prerequisites: xtwt, xlrd in virtualenv
+"""
 
 __author__ = 'Michael Meisinger'
 
 import csv
 import datetime
 import os
+import sys
 import xlwt
 from xlsparser import XLSParser
-import json
 
-REQ_FILE = "Req_Export_CI_2013-09-10_ver_0-14.xlsx"
+REQ_FILE = "Req_Export_CI_2013-09-11_ver_0-15.xlsx"
+OUT_FILE_PREFIX = "output/reqanalysis"
 
 TAB_L2 = "L2_CU"
 TAB_L3 = "L3_CI"
 TAB_L4 = "L4"
+
+GROUP_MAP = {"0": "VERIFIED", "1": "EXPECTED R3", "2": "EXPECTED R4", "5": "OUT", "4": "UX", "10": "INT"}
+
 
 class ReqAnalysis(object):
     def __init__(self):
@@ -31,6 +40,9 @@ class ReqAnalysis(object):
                 xls_parser = XLSParser()
                 self.csv_files = xls_parser.extract_csvs(doc_str)
                 print "Parsed req file OK. Tabs=%s" % len(self.csv_files)
+        else:
+            print "ERROR: Requirements file %s does not exist" % filename
+            sys.exit(1)
 
         PARSE_TABS = [
             (TAB_L2, "L2"),
@@ -57,13 +69,13 @@ class ReqAnalysis(object):
         l3_req_dict = self.req[TAB_L3]
         l4_req_dict = self.req[TAB_L4]
 
-        ws = self._wb.add_sheet("L3_L4")
-        [ws.write(0, col, hdr) for (col, hdr) in enumerate(["SRC_ID", "SRC_Text", "TARG_ID", "TARG_Text", "Parents", "Group"])]
-        self._row = 1
-
         l3_ws = self._wb.add_sheet("L3")
-        [l3_ws.write(0, col, hdr) for (col, hdr) in enumerate(["L3_ID", "SRC_Text", "Num L4", "Num Ver", "Num STC", "Num R4", "Num OUT", "Num Other", "Status1", "Status2"])]
+        [l3_ws.write(0, col, hdr) for (col, hdr) in enumerate(["L3 ID", "L3 Requirement Statement", "Num L4", "Num Verified", "Num R3", "Num R4", "Num Out", "Num UX/Int", "Status", "Addressed", "Percent"])]
         self._row_l3 = 1
+
+        ws = self._wb.add_sheet("L3_L4")
+        [ws.write(0, col, hdr) for (col, hdr) in enumerate(["L3 ID", "L3 Requirement Statement", "L4 ID", "L4 Requirement Statement", "Num Parents", "Status"])]
+        self._row = 1
 
         for l3_req in sorted(l3_req_dict.values(), key=lambda x: x["order"]):
             req_id = l3_req["req_id"]
@@ -83,7 +95,7 @@ class ReqAnalysis(object):
                         ws.write(self._row, 3, value.encode("ascii", "replace"))
                         ws.write(self._row, 4, l4_req["l3_link_parents"])
                         group = str(l4_req["group"])
-                        ws.write(self._row, 5, group)
+                        ws.write(self._row, 5, GROUP_MAP.get(group, group))
 
                         if group not in l4_count_by_group:
                             l4_count_by_group[group] = 0
@@ -113,23 +125,26 @@ class ReqAnalysis(object):
 
             l3_status = ""
             if not l4_count:
-                l3_status = ""
+                if " shall " in l3_req["req_txt"]:
+                    l3_status = "MISSING L4"
+                else:
+                    l3_status = ""
             elif l4_count == l4_cnt_ver:
                 l3_status = "VERIFIED"
             elif l4_count == l4_cnt_ver + l4_cnt_r3:
-                l3_status = "EXPECTED STC"
+                l3_status = "EXPECTED R3"
             elif l4_count == l4_cnt_ver + l4_cnt_r3 + l4_cnt_r4:
                 l3_status = "EXPECTED R4"
             elif l4_count == l4_cnt_out + l4_cnt_off:
                 l3_status = "OUT"
-            elif l4_cnt_ver:
+            elif l4_cnt_ver or l4_cnt_r3:
                 l3_status = "PARTIAL"
             else:
                 l3_status = "OTHER"
             l3_ws.write(self._row_l3, 8, l3_status)
             l3_req["l3_status"] = l3_status
 
-            if l3_status in ("VERIFIED", "EXPECTED STC", "EXPECTED R4", "PARTIAL"):
+            if l4_cnt_ver + l4_cnt_r3 > 0:
                 l3_status2 = "ADDRESSED"
             elif not l3_status:
                 l3_status2 = ""
@@ -137,15 +152,20 @@ class ReqAnalysis(object):
                 l3_status2 = "NOT ADDRESSED"
             l3_ws.write(self._row_l3, 9, l3_status2)
             l3_req["l3_status2"] = l3_status2
+
+            l3_ws.write(self._row_l3, 10, int(100 * (l4_cnt_ver + l4_cnt_r3) / l4_count) if l4_count else "")
+
             self._row_l3 += 1
 
-        ws = self._wb.add_sheet("L2_L3")
-        [ws.write(0, col, hdr) for (col, hdr) in enumerate(["SRC_ID", "SRC_Text", "TARG_ID", "TARG_Text", "Parents", "Status1", "Status2"])]
-        self._row = 1
+        # L2-L3 Analysis
 
         l2_ws = self._wb.add_sheet("L2")
-        [l2_ws.write(0, col, hdr) for (col, hdr) in enumerate(["L2_ID", "SRC_Text", "Num L3", "Num Ver", "Num R3", "Num R4", "Num Out", "Num Other", "Num Addressed", "Num Not", "Status1", "Status2"])]
+        [l2_ws.write(0, col, hdr) for (col, hdr) in enumerate(["L2 ID", "L2 Requirement Statement", "Num L3", "Num Verified", "Num R3", "Num R4", "Num Out", "Num UX/Int", "Num Addressed", "Num Not Addr", "Status", "Addressed", "Percent"])]
         self._row_l2 = 1
+
+        ws = self._wb.add_sheet("L2_L3")
+        [ws.write(0, col, hdr) for (col, hdr) in enumerate(["L2 ID", "L2 Requirement Statement", "L3 ID", "L3 Requirement Statement", "Num Parents", "Status", "Addressed"])]
+        self._row = 1
 
         for l2_req in sorted(l2_req_dict.values(), key=lambda x: x["order"]):
             req_id = l2_req["req_id"]
@@ -188,7 +208,7 @@ class ReqAnalysis(object):
             l2_ws.write(self._row_l2, 2, l3_count)
             l4_cnt_ver = l3_count_by_group.get("VERIFIED", 0)
             l2_ws.write(self._row_l2, 3, l4_cnt_ver or "")
-            l4_cnt_r3 = l3_count_by_group.get("EXPECTED STC", 0)
+            l4_cnt_r3 = l3_count_by_group.get("EXPECTED R3", 0)
             l2_ws.write(self._row_l2, 4, l4_cnt_r3 or "")
             l4_cnt_r4 = l3_count_by_group.get("EXPECTED R4", 0)
             l2_ws.write(self._row_l2, 5, l4_cnt_r4 or "")
@@ -203,16 +223,19 @@ class ReqAnalysis(object):
 
             l2_status = ""
             if not l3_count:
-                l2_status = ""
+                if " shall " in l2_req["req_txt"]:
+                    l2_status = "MISSING L3"
+                else:
+                    l2_status = ""
             elif l3_count == l4_cnt_ver:
                 l2_status = "VERIFIED"
             elif l3_count == l4_cnt_ver + l4_cnt_r3:
-                l2_status = "EXPECTED STC"
+                l2_status = "EXPECTED R3"
             elif l3_count == l4_cnt_ver + l4_cnt_r3 + l4_cnt_r4:
                 l2_status = "EXPECTED R4"
             elif l3_count == l4_cnt_out + l4_cnt_off:
                 l2_status = "OUT"
-            elif l4_cnt_ver:
+            elif l4_cnt_ver or l4_cnt_r3:
                 l2_status = "PARTIAL"
             else:
                 l2_status = "OTHER"
@@ -228,15 +251,17 @@ class ReqAnalysis(object):
             l2_ws.write(self._row_l2, 11, l2_status2)
             l2_req["l2_status"] = l2_status2
 
+            l2_ws.write(self._row_l2, 12, int(100 * (l4_cnt_ver + l4_cnt_r3) / l3_count) if l3_count else "")
+
             self._row_l2 += 1
 
         dtstr = datetime.datetime.today().strftime('%Y%m%d_%H%M%S')
-        path = filename or "output/reqanalysis_%s.xls" % dtstr
+        path = filename or OUT_FILE_PREFIX + "_%s.xls" % dtstr
         self._wb.save(path)
 
-    def do_all(self):
-        self.parse(REQ_FILE)
-        self.dump_analysis()
+    def do_all(self, in_filename=None, out_filename=None):
+        self.parse(in_filename or REQ_FILE)
+        self.dump_analysis(out_filename)
 
     # -------------------------------------------------------------------------
 
@@ -295,11 +320,15 @@ class ReqAnalysis(object):
         self._add_req_links(req_id, l3_links, TAB_L3, "l4_out_links")
 
     def _parse_L3(self, row):
+        req_txt = row["Requirement Statement"]
+        if not req_txt.strip():
+            return
+
         req_id = row["ID"]
         l2_links = self._build_req_links(row["L2_CU"], "L2-CU-RQ-")
         req_dict = dict(
             req_id=req_id,
-            req_txt=row["Requirement Statement"],
+            req_txt=req_txt,
             l2_links=l2_links,
             l2_link_parents=len(l2_links),
             order=self._lnum
@@ -317,5 +346,8 @@ class ReqAnalysis(object):
         self._add_req(TAB_L2, req_id, req_dict)
 
 if __name__ == '__main__':
+    in_filename = sys.argv[1] if len(sys.argv) >= 2 else None
+    out_filename = sys.argv[2] if len(sys.argv) >= 3 else None
+
     ra = ReqAnalysis()
-    ra.do_all()
+    ra.do_all(in_filename, out_filename)
