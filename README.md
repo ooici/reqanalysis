@@ -6,15 +6,16 @@ produces an Excel spreadsheet with an analysis report.
 
 ## Usage
 
-python reqanalysis.py <in_filename> <out_filename>
+python reqanalysis.py < in_filename > < out_filename >
 
-The default <in_filename> is defined in the code.
+The default < in_filename > is defined in the code.
 
-The default <out_filename> is output/reqanalysis_<timestamp>
+The default < out_filename > is output/reqanalysis_< timestamp >
 
 ## Prerequisites
 
-mkvirtualenv --no-site-packages --python=python2.7 req
+```mkvirtualenv --no-site-packages --python=python2.7 req
 easy_install pip
 pip install xlrd
 pip install xtwt
+```
