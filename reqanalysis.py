@@ -16,7 +16,7 @@ import sys
 import xlwt
 from xlsparser import XLSParser
 
-REQ_FILE = "Req_Export_CI_2013-09-11_ver_0-15.xlsx"
+REQ_FILE = "Req_Export_CI_2013-10-07_ver_0-18.xlsx"
 OUT_FILE_PREFIX = "output/reqanalysis"
 
 TAB_L2 = "L2_CU"
@@ -36,10 +36,10 @@ class ReqAnalysis(object):
             with open(filename, "rb") as f:
                 print "Opened", filename
                 doc_str = f.read()
-                print "Read req file, size=%s", len(doc_str)
+                print "Read req file, size=%s" % len(doc_str)
                 xls_parser = XLSParser()
                 self.csv_files = xls_parser.extract_csvs(doc_str)
-                print "Parsed req file OK. Tabs=%s" % len(self.csv_files)
+                print "Parsed req file OK. Found %s tabs." % len(self.csv_files)
         else:
             print "ERROR: Requirements file %s does not exist" % filename
             sys.exit(1)
@@ -57,9 +57,13 @@ class ReqAnalysis(object):
                 reader = csv.DictReader(tab_rows, delimiter=',')
                 print "Parsing tab", tab
                 self._lnum = 0
+                self._add_cnt = 0
                 for row in reader:
-                    parse_func(row)
+                    res = parse_func(row)
                     self._lnum += 1
+                    if res:
+                        self._add_cnt += 1
+                print " ...using %s of %s rows" % (self._add_cnt, self._lnum)
 
     def dump_analysis(self, filename=None):
         self._wb = xlwt.Workbook()
@@ -288,14 +292,14 @@ class ReqAnalysis(object):
         for link in links:
             targ_req = targ_req_dict.get(link, None)
             if not targ_req:
-                print " ERROR: Link %s target does not exist: %s/%s " % (req_id, targ, link)
+                print " WARNING: Link %s target does not exist: %s " % (req_id, link)
                 continue
 
             if targ_attr not in targ_req:
                 targ_req[targ_attr] = []
             targ_link_list = targ_req[targ_attr]
             if req_id in targ_link_list:
-                print " WARNING: Link to %s/%s already present: %s" % (targ, link, req_id)
+                print " WARNING: Link to %s already present: %s" % (link, req_id)
             targ_link_list.append(req_id)
 
     # -------------------------------------------------------------------------
@@ -307,9 +311,12 @@ class ReqAnalysis(object):
 
         req_id = row["ID"]
         l3_links = self._build_req_links(row["L3 Link"], "L3-CI-RQ-")
+        req_txt = row["Requirement Statement"]
+        if row["Proposed Change"].strip() and not "Deprecate" in row["Item Type"]:
+            req_txt = row["Proposed Change"]
         req_dict = dict(
             req_id=req_id,
-            req_txt=row["Requirement Statement"],
+            req_txt=req_txt,
             item_type=row["Item Type"],
             l3_links=l3_links,
             l3_link_parents=len(l3_links),
@@ -319,8 +326,13 @@ class ReqAnalysis(object):
         self._add_req(TAB_L4, req_id, req_dict)
         self._add_req_links(req_id, l3_links, TAB_L3, "l4_out_links")
 
+        return True
+
     def _parse_L3(self, row):
         req_txt = row["Requirement Statement"]
+        item_class = row["Item Class"]
+        #if item_class not in ["Approved Req", "Approved Int"]:
+        #    return
         if not req_txt.strip():
             return
 
@@ -335,6 +347,7 @@ class ReqAnalysis(object):
         )
         self._add_req(TAB_L3, req_id, req_dict)
         self._add_req_links(req_id, l2_links, TAB_L2, "l3_out_links")
+        return True
 
     def _parse_L2(self, row):
         req_id = row["ID"]
@@ -344,6 +357,7 @@ class ReqAnalysis(object):
             order=self._lnum
         )
         self._add_req(TAB_L2, req_id, req_dict)
+        return True
 
 if __name__ == '__main__':
     in_filename = sys.argv[1] if len(sys.argv) >= 2 else None
