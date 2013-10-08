@@ -18,12 +18,44 @@ from xlsparser import XLSParser
 
 REQ_FILE = "Req_Export_CI_2013-10-07_ver_0-18.xlsx"
 OUT_FILE_PREFIX = "output/reqanalysis"
+OUT_TRACE_PREFIX = "output/tracing"
 
 TAB_L2 = "L2_CU"
 TAB_L3 = "L3_CI"
 TAB_L4 = "L4"
+TAB_MS = "Milestones"
 
 GROUP_MAP = {"0": "VERIFIED", "1": "EXPECTED R3", "2": "EXPECTED R4", "5": "OUT", "4": "UX", "10": "INT"}
+
+HTABLE_START = """
+<div class="panel" style="border-width: 1px;">
+  <div class="panelContent">
+    <h3>%%TITLE%%</h3>
+    <div class='table-wrap'>
+      <table class='confluenceTable'>"""
+
+HTABLE_END = """
+      </table>
+    </div>
+  </div>
+</div>"""
+
+HTABLE_ROW_START = """
+        <tr>"""
+
+HTABLE_ROW_END = """
+        </tr>"""
+
+HTABLE_HEAD_ROW = """
+          <th class='confluenceTh'>%%TEXT%%</th>"""
+
+HTABLE_ROW = """
+          <td class='confluenceTd'>%%TEXT%%</td>"""
+
+HTABLE_SEP = """
+<p>
+  <br class="atl-forced-newline" />
+</p>"""
 
 
 class ReqAnalysis(object):
@@ -48,6 +80,7 @@ class ReqAnalysis(object):
             (TAB_L2, "L2"),
             (TAB_L3, "L3"),
             (TAB_L4, "L4"),
+            (TAB_MS, "milestone"),
         ]
         for tab, name in PARSE_TABS:
             tab_rows = self.csv_files[tab]
@@ -263,9 +296,60 @@ class ReqAnalysis(object):
         path = filename or OUT_FILE_PREFIX + "_%s.xls" % dtstr
         self._wb.save(path)
 
+    def dump_trace_files(self):
+        ms_dict = self.req[TAB_MS]
+
+        l2_req_dict = self.req[TAB_L2]
+        l3_req_dict = self.req[TAB_L3]
+        l4_req_dict = self.req[TAB_L4]
+
+        for ms in sorted(ms_dict.values(), key=lambda x: x["order"]):
+            if not ms["group"] or int(ms["group"]) != 1:
+                continue
+
+            ms_id = ms["ms_id"]
+
+            if not os.path.exists(OUT_TRACE_PREFIX):
+                os.makedirs(OUT_TRACE_PREFIX)
+
+            ms_filename = "%s/%s.html" % (OUT_TRACE_PREFIX, ms_id)
+            with open(ms_filename, "w") as f:
+                f.write(HTABLE_START.replace("%%TITLE%%", "Requirements for %s" % ms_id))
+                f.write(HTABLE_ROW_START)
+                f.write(HTABLE_HEAD_ROW.replace("%%TEXT%%", "Level"))
+                f.write(HTABLE_HEAD_ROW.replace("%%TEXT%%", "Requirement ID"))
+                f.write(HTABLE_HEAD_ROW.replace("%%TEXT%%", "Requirements Statement"))
+                f.write(HTABLE_HEAD_ROW.replace("%%TEXT%%", "Rationale and Description"))
+                f.write(HTABLE_ROW_END)
+
+                ms_l4 = [l4r for l4r in l4_req_dict.values() if l4r["req_ms1"].startswith(ms_id) or l4r["req_ms2"].startswith(ms_id)]
+                ms_l3_ids = set()
+                for l4r in ms_l4:
+                    ms_l3_ids.update(l4r.get("l3_links", []))
+                print ms_id, "L3", ms_l3_ids
+                ms_l3 = [l3_req_dict[l3id] for l3id in ms_l3_ids if l3id in l3_req_dict]
+                ms_l2_ids = set()
+                for l3r in ms_l3:
+                    ms_l2_ids.update(l3r.get("l2_links", []))
+                print ms_id, "L2", ms_l2_ids
+                ms_l2 = [l2_req_dict[l2id] for l2id in ms_l2_ids if l2id in l2_req_dict]
+
+                for level, req_list in (("L2", ms_l2), ("L3", ms_l3), ("L4", ms_l4)):
+                    for req in req_list:
+                        f.write(HTABLE_ROW_START)
+                        f.write(HTABLE_ROW.replace("%%TEXT%%", level))
+                        f.write(HTABLE_ROW.replace("%%TEXT%%", req["req_id"]))
+                        f.write(HTABLE_ROW.replace("%%TEXT%%", req["req_txt"]))
+                        f.write(HTABLE_ROW.replace("%%TEXT%%", req["desc"]))
+                        f.write(HTABLE_ROW_END)
+
+                f.write(HTABLE_END)
+
     def do_all(self, in_filename=None, out_filename=None):
         self.parse(in_filename or REQ_FILE)
         self.dump_analysis(out_filename)
+
+        self.dump_trace_files()
 
     # -------------------------------------------------------------------------
 
@@ -321,6 +405,9 @@ class ReqAnalysis(object):
             l3_links=l3_links,
             l3_link_parents=len(l3_links),
             group=row["Group"],
+            req_ms1=row["Tracing to Milestone"],
+            req_ms2=row["Tracing to Milestone secondary"],
+            desc=row["Rationale and Description"],
             order=self._lnum
         )
         self._add_req(TAB_L4, req_id, req_dict)
@@ -343,6 +430,7 @@ class ReqAnalysis(object):
             req_txt=req_txt,
             l2_links=l2_links,
             l2_link_parents=len(l2_links),
+            desc=row["Rationale and Description"],
             order=self._lnum
         )
         self._add_req(TAB_L3, req_id, req_dict)
@@ -354,9 +442,22 @@ class ReqAnalysis(object):
         req_dict = dict(
             req_id=req_id,
             req_txt=row["Requirement Statement"],
+            desc=row["Rationale and Description"],
             order=self._lnum
         )
         self._add_req(TAB_L2, req_id, req_dict)
+        return True
+
+    def _parse_milestone(self, row):
+        ms_id = row["ID"]
+        ms_dict = dict(
+            ms_id=ms_id,
+            ms_txt=row["Milestone Name"],
+            deliverable=row["Deliverable"],
+            group=row["Group"],
+            order=self._lnum
+        )
+        self._add_req(TAB_MS, ms_id, ms_dict)
         return True
 
 if __name__ == '__main__':
